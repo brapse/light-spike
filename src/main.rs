@@ -1,95 +1,98 @@
-
-/// What do we want
-/// We to design a system posed of components which can be verified independently and
-/// together.
-/// We want the interface to independent and composition of components of be generic enough to
-/// apply between runtimes. Events
-
-enum Event{
-    Foo()
+/// Make a dummy light client which executes and updates a trusted state while seperating
+/// Start With IO and Verifier
+/// Add Detector Later
+// IO
+enum IOEvent {
+    NoOp(),
+}
+struct IO {
 }
 
-struct Pex {
-}
-
-impl Pex {
-    fn handle(event: Event) -> Event {
-        return Event::Foo()
+impl IO {
+    fn new() -> IO {
+        return IO{}
+    }
+    // XXX: will probably need &mut self
+    fn handle(&mut self, event: IOEvent) -> IOEvent {
+        return IOEvent::NoOp()
     }
 }
 
-struct Scheduler {
-}
-
-impl Scheduler {
-    fn handle(event: Event) -> Event {
-        return Event::Foo()
-    }
+// Verifier
+enum VerifierEvent {
+    NoOp()
 }
 
 struct Verifier {
 }
 
 impl Verifier {
-    fn handle(event: Event) -> Event {
-        return Event::Foo()
+    fn new() -> Verifier {
+        return Verifier{}
+    }
+    fn handle(&mut self, event: VerifierEvent) -> VerifierEvent{
+        return VerifierEvent::NoOp()
     }
 }
 
-struct Detector {
-}
-
-impl Detector {
-    fn handle(event: Event) -> Event {
-        return Event::Foo()
-    }
-}
-
+// Combine them
 struct Control {
-    scheduler: Scheduler,
-    detector: Detector,
+    io: IO,
     verifier: Verifier,
 }
 
+// How do we stop this thing?
 impl Control {
-    fn handle(event) -> Event {
-        match e {
-            SchedulerEvent(event) => {
-                return self.scheduler.handle(event);
+    fn new(io: IO, verifier: Verifier) -> Control {
+        return Control {
+            io,
+            verifier
+        }
+    }
+
+    fn handle(&mut self, event: Event) -> Event {
+        match event {
+            Event::IOEvent(event) => {
+                return self.io.handle(event).into(); // We require From IOEvent => Event
             },
-            DetectorEvent(event) => {
-                return self.detector.handle(event);
+            Event::VerifierEvent(event) => {
+                return self.verifier.handle(event).into();
             },
-            Verifier(event) => {
-                return self.detector.handle(event);
-            },
+            Event::NoOp() => return Event::NoOp(), // XXX: Should not happen
         }
     }
 }
 
-// what about the pex?
+enum Event {
+    IOEvent(IOEvent),
+    VerifierEvent(VerifierEvent),
+    NoOp(),
+}
+
+impl From<IOEvent> for Event {
+    fn from(event: IOEvent) -> Self {
+        Event::IOEvent(event)
+    }
+}
+
+impl From<VerifierEvent> for Event {
+    fn from(event: VerifierEvent) -> Self {
+        Event::VerifierEvent(event)
+    }
+}
+
 fn main() {
-    let node = Node::new();
-    let dispatcher = Dispatcher::new();
-    let event = Event::Init()
-    let next = node.handle(event);
-    loop {
-        match next {
-            Event::Terminate() => break;
-            Event::Dispatch(event) => next = dispatcher.handle(event);
-            Event::Node(event) => next = node.handle(event);
-        }
-    }
-    // cleanup
-}
+    let verifier = Verifier::new();
+    let io = IO::new();
+    let control = Control::new(io, verifier);
 
-// What are the expensive operaitons
-// * IO: Writting to peers
-// * Verification : Verifying headers
-// * Disk: Writting headers to 
-// What do we want to test
-// * The Scheduler bisection algorithm
-//      *  Sequence of events init, detectionError, VerifcationError, etc
-// * That's really the only part that needs deterministic simulation, everything else can be done
-// async
-//
+    // TODO: Setup channels and runtime
+    // probably run this in a thread conncted with a channel
+    // Add some tickers to drive the process
+
+    // How will this run?
+    // A queue reading loop
+    // We can then break the loop by sending a terminate 
+    // We then need some way of getting events out
+    // Q: What is an event out? 
+}
