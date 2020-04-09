@@ -1,6 +1,14 @@
 /// Make a dummy light client which executes and updates a trusted state while seperating
 /// Start With IO and Verifier
 /// Add Detector Later
+/// How will the light client be used?
+/// In all likelyhood it will be initiated within a process and provide other components with a
+/// TrustedState
+
+use std::thread;
+use std::time::{Duration, Instant};
+use crossbeam::{channel, tick, select};
+
 // IO
 enum IOEvent {
     NoOp(),
@@ -12,7 +20,7 @@ impl IO {
     fn new() -> IO {
         return IO{}
     }
-    // XXX: will probably need &mut self
+
     fn handle(&mut self, event: IOEvent) -> IOEvent {
         return IOEvent::NoOp()
     }
@@ -41,7 +49,7 @@ struct Control {
     verifier: Verifier,
 }
 
-// How do we stop this thing?
+// How do we export the trusted state?
 impl Control {
     fn new(io: IO, verifier: Verifier) -> Control {
         return Control {
@@ -53,12 +61,13 @@ impl Control {
     fn handle(&mut self, event: Event) -> Event {
         match event {
             Event::IOEvent(event) => {
-                return self.io.handle(event).into(); // We require From IOEvent => Event
+                return self.io.handle(event).into();
             },
             Event::VerifierEvent(event) => {
                 return self.verifier.handle(event).into();
             },
-            Event::NoOp() => return Event::NoOp(), // XXX: Should not happen
+            // XXX: Detector
+            _ => return Event::NoOp(), // TODO:  Remove this when complete
         }
     }
 }
@@ -66,6 +75,7 @@ impl Control {
 enum Event {
     IOEvent(IOEvent),
     VerifierEvent(VerifierEvent),
+    Terminate(),
     NoOp(),
 }
 
@@ -84,15 +94,33 @@ impl From<VerifierEvent> for Event {
 fn main() {
     let verifier = Verifier::new();
     let io = IO::new();
-    let control = Control::new(io, verifier);
+    let mut control = Control::new(io, verifier);
 
-    // TODO: Setup channels and runtime
-    // probably run this in a thread conncted with a channel
-    // Add some tickers to drive the process
-
-    // How will this run?
-    // A queue reading loop
-    // We can then break the loop by sending a terminate 
-    // We then need some way of getting events out
-    // Q: What is an event out? 
+    // Should we export the trusted state somehow?
+    let (control_sender, control_receiver) = channel::bounded::<Event>(1);
+    let loop_sender = control_sender.clone();
+    let ticker = tick(Duration::from_millis(100));
+    thread::spawn(move || {
+        // We can have a timeout here for liveliness if we like
+        loop {
+            select! {
+                recv(control_receiver) -> maybe_event => { // TODO: Handle channel drop
+                    let event = maybe_event.unwrap();
+                    match event {
+                        Event::Terminate() => {
+                            println!("Terminating node");
+                            return
+                        },
+                        _ => {
+                            let next = control.handle(event); 
+                            control_sender.send(next).unwrap(); // TODO: handle error
+                        },
+                    }
+                },
+                recv(ticker) -> tick => {
+                    // Drive the FSM forward
+                },
+            }
+        }
+    });
 }
