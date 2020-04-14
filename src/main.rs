@@ -5,7 +5,7 @@
 /// 1.1 Allow determinstic simulation
 /// 2. Have the light client generated the trusted state that provide read only access to that
 ///    trusted state in seperate threads
-use std::thread;
+use std::{thread,time};
 use std::time::{Duration};
 use crossbeam::{channel, tick, select};
 use light_spike::{TrustedState, TSReadWriter};
@@ -13,6 +13,8 @@ use light_spike::{TrustedState, TSReadWriter};
 // IO
 enum IOEvent {
     NoOp(),
+    Request(),
+    Response(),
 }
 struct IO {
 }
@@ -29,7 +31,11 @@ impl IO {
 
 // Verifier
 enum VerifierEvent {
-    NoOp()
+    NoOp(),
+    NextRequest(),
+    Request(),
+    Response(),
+    Verified(),
 }
 
 struct Verifier {
@@ -37,9 +43,10 @@ struct Verifier {
 
 impl Verifier {
     fn new() -> Verifier {
-        return Verifier{}
+        return Verifier { }
     }
-    fn handle(&mut self, event: VerifierEvent) -> VerifierEvent{
+
+    fn handle(&mut self, event: VerifierEvent) -> VerifierEvent {
         return VerifierEvent::NoOp()
     }
 }
@@ -50,7 +57,8 @@ struct LightClient {
     trusted_state: TSReadWriter,
 }
 
-impl LightClient{
+// Tick => Verifier(NextRequest) => IO(Request) => Verifier(Response) => 
+impl LightClient {
     fn new(trusted_state: TSReadWriter, io: IO, verifier: Verifier) -> LightClient {
         return LightClient {
             trusted_state: trusted_state,
@@ -59,45 +67,49 @@ impl LightClient{
         }
     }
 
-    // TODO: rough outline of how the protocol will proceed
-    // Why does it need to be this way?
-    // Such that we can represent any sequenceof atomic transformations
     fn handle(&mut self, event: Event) -> Event {
+        println!("event!");
         match event {
-            Event::IOEvent(event) => {
-                return self.io.handle(event).into();
+            Event::Tick() => {
+                // XXX: Right now we initial a single flow, directly to verifiers.
+                // In the case in which we have multiple finite state machine flows, including
+                // timeouts, we can initiate different flows in a deterministic order.
+                let next = VerifierEvent::NextRequest();
+                return self.verifier.handle(next).into()
             },
-            Event::VerifierEvent(event) => {
-                return self.verifier.handle(event).into();
+            Event::VerifierEvent(VerifierEvent::Request()) => {
+                let next = IOEvent::Request();
+                return self.io.handle(next).into()
             },
-            // XXX: Detector
-            _ => return Event::NoOp(), // TODO:  Remove this when complete
+            Event::IOEvent(IOEvent::Response()) => {
+                let next = VerifierEvent::Response();
+                return self.verifier.handle(next).into()
+            },
+            Event::VerifierEvent(VerifierEvent::Verified()) => {
+                let next = VerifierEvent::NextRequest();
+                return self.verifier.handle(next).into()
+            },
+            Event::NoOp() => {
+                // Probably route to the verifier
+                return Event::Tick();
+            },
+            _ => return Event::Tick(), // TODO:  Remove this when complete
         }
     }
 
-    fn run(mut self) {
-        let (control_sender, control_receiver) = channel::bounded::<Event>(1);
-        let loop_sender = control_sender.clone();
-        let ticker = tick(Duration::from_millis(100));
+    fn run(mut self, sender: channel::Sender<Event>, receiver: channel::Receiver<Event>) {
         thread::spawn(move || {
-            // We can have a timeout here for liveliness if we like
+            // XXX: We can have a timeout here for liveliness if we like
             loop {
-                select! {
-                    recv(control_receiver) -> maybe_event => { // TODO: Handle channel drop
-                        let event = maybe_event.unwrap();
-                        match event {
-                            Event::Terminate() => {
-                                println!("Terminating node");
-                                return
-                            },
-                            _ => {
-                                let next = self.handle(event);
-                                control_sender.send(next).unwrap(); // TODO: handle error
-                            },
-                        }
+                let event = receiver.recv().unwrap();
+                match event {
+                    Event::Terminate() => {
+                        println!("Terminating node");
+                        return
                     },
-                    recv(ticker) -> tick => {
-                        // Drive the FSM forward
+                    _ => {
+                        let next = self.handle(event);
+                        sender.send(next).unwrap(); // TODO: handle error
                     },
                 }
             }
@@ -109,6 +121,7 @@ enum Event {
     IOEvent(IOEvent),
     VerifierEvent(VerifierEvent),
     Terminate(),
+    Tick(),
     NoOp(),
 }
 
@@ -126,12 +139,25 @@ impl From<VerifierEvent> for Event {
 
 fn main() {
     let trusted_state =  TrustedState::new(); // TODO: Subjective intialization
-    let (ts_reader, ts_writer) = trusted_state.split();
+    let (ts_reader, ts_read_writer) = trusted_state.split();
+    // verifier here needs the trusted state
     let verifier = Verifier::new();
     let io = IO::new();
-    let light_client = LightClient::new(ts_writer, io, verifier);
+    let light_client = LightClient::new(ts_read_writer, io, verifier);
 
-    light_client.run();
-    //sleep for a few seconds
-    // exit
+    let (sender, receiver) = channel::bounded::<Event>(1);
+    let internal_sender = sender.clone();
+    light_client.run(internal_sender, receiver);
+
+    sender.send(Event::Tick());
+    println!("sleeping");
+    let ten_millis = time::Duration::from_millis(100);
+    thread::sleep(ten_millis);
+    println!("done sleeping");
+    // neeed to synchronize this
+    sender.send(Event::Terminate());
+
+    let ten_millis = time::Duration::from_millis(100);
+    thread::sleep(ten_millis);
+    // TODO: remove sleeps with actual termination
 }
