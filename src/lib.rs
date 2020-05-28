@@ -1,4 +1,5 @@
 use std::sync::{Arc, RwLock};
+mod light_client;
 
 #[derive(Clone)]
 struct Commit {
