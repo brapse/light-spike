@@ -8,139 +8,10 @@
 use std::{thread,time};
 use std::time::{Instant, Duration};
 use crossbeam::channel;
-use light_spike::{TrustedState, TSReadWriter};
+use light_spike::light_client::Supervisor;
+use light_spike::relayer::Relayer;
 
-// IO
-#[derive(Debug)]
-enum IOEvent {
-    NoOp(),
-    Request(),
-    Response(),
-}
-
-struct IO {
-}
-
-impl IO {
-    fn new() -> IO {
-        return IO{}
-    }
-
-    fn handle(&mut self, event: IOEvent) -> IOEvent {
-        return IOEvent::NoOp()
-    }
-}
-
-#[derive(Debug)]
-enum VerifierEvent {
-    NoOp(),
-    NextRequest(),
-    Request(),
-    Response(),
-    Verified(),
-}
-
-struct Verifier {
-    // 
-}
-
-impl Verifier {
-    fn new() -> Verifier {
-        return Verifier { }
-    }
-
-    fn handle(&mut self, event: VerifierEvent) -> VerifierEvent {
-        return VerifierEvent::NoOp()
-    }
-}
-
-struct LightClient {
-    io: IO,
-    verifier: Verifier,
-    trusted_state: TSReadWriter,
-    last_progress: Instant,
-    timeout: Duration,
-}
-
-impl LightClient {
-    fn new(trusted_state: TSReadWriter, io: IO, verifier: Verifier) -> LightClient {
-        return LightClient {
-            trusted_state: trusted_state,
-            io,
-            verifier,
-            last_progress: Instant::now(),
-            timeout: Duration::from_millis(1),
-        }
-    }
-
-    // TODO: Align Events with ADR
-    fn handle(&mut self, event: Event) -> Event {
-        println!("event! {:?}", event);
-        match event {
-            Event::Tick(instant) => {
-                if instant.saturating_duration_since(self.last_progress) > self.timeout {
-                    return Event::Timeout()
-                }
-                let next = VerifierEvent::NextRequest();
-                return self.verifier.handle(next).into()
-            },
-            Event::VerifierEvent(VerifierEvent::Request()) => {
-                let next = IOEvent::Request();
-                return self.io.handle(next).into()
-            },
-            Event::IOEvent(IOEvent::Response()) => {
-                let next = VerifierEvent::Response();
-                return self.verifier.handle(next).into()
-            },
-            Event::VerifierEvent(VerifierEvent::Verified()) => {
-                self.last_progress = Instant::now();
-                let next = VerifierEvent::NextRequest();
-                return self.verifier.handle(next).into()
-            },
-            _ => return Event::Tick(Instant::now()),
-        }
-    }
-
-    fn run(mut self,
-        sender: channel::Sender<Event>,
-        receiver: channel::Receiver<Event>,
-        output: channel::Sender<Event>) {
-        self.last_progress = Instant::now();
-        thread::spawn(move || {
-            loop {
-                let event = receiver.recv().unwrap();
-                match event {
-                    Event::Terminate() => {
-                        println!("Terminating node");
-                        output.send(Event::Terminated()).unwrap();
-                        return
-                    },
-                    Event::Timeout() => {
-                        output.send(event).unwrap();
-                        return
-                    },
-                    _ => {
-                        let next = self.handle(event);
-                        sender.send(next).unwrap();
-                    },
-                }
-            }
-        });
-    }
-}
-
-
-#[derive(Debug)]
-enum Event {
-    IOEvent(IOEvent),
-    VerifierEvent(VerifierEvent),
-    Terminate(),
-    Terminated(),
-    Tick(Instant),
-    Timeout(),
-    NoOp(),
-}
-
+/* TODO: Map events
 impl From<IOEvent> for Event {
     fn from(event: IOEvent) -> Self {
         Event::IOEvent(event)
@@ -152,21 +23,43 @@ impl From<VerifierEvent> for Event {
         Event::VerifierEvent(event)
     }
 }
+*/
 
+enum Event {
+}
 fn main() {
-    let trusted_state =  TrustedState::new(); // TODO: Subjective intialization
-    let (ts_reader, ts_read_writer) = trusted_state.split();
-    // verifier here needs the trusted state
-    let verifier = Verifier::new();
-    let io = IO::new();
-    let light_client = LightClient::new(ts_read_writer, io, verifier);
+    // let's launch a supervisor an a relayer and stich them together with channels
+    // TODO: Subjective initialization
+    let light_client = Supervisor::new();
+    let relayer = Relayer::new();
 
-    let (sender, receiver) = channel::unbounded::<Event>();
-    let (output_sender, output_receiver) = channel::unbounded::<Event>();
-    let internal_sender = sender.clone();
-    light_client.run(internal_sender, receiver, output_sender);
+    // Node Channel
+    let (node_sender, node_receiver) = channel::unbounded::<Event>();
 
-    sender.send(Event::Tick(Instant::now()));
-    let conclusion = output_receiver.recv().unwrap();
-    println!("Conclusion: {:?}", conclusion);
+    // launch light_client
+    let (light_client_sender, light_client_receiver)  = channel::unbounded::<Event>();
+    thread::spawn(move || {
+        // light_client.run(light_client_sender, light_client_receiver);
+    });
+
+    let (relayer_client_sender, relyaer_client_receiver)  = channel::unbounded::<Event>();
+    thread::spawn(move || {
+        // realyer.run(light_client_sender, light_client_receiver);
+    });
+    // launch relayer
+    //
+    //
+    //;Launch a runtime in this select over the channels
+    thread::spawn(move || {
+        let event = node_receiver.recv().unwrap();
+            // Route event to relayer
+            // Route event to light_client
+            // handle termination
+    });
+
+    // 
+    // send some events
+    // Terminate
+    // wait for terminated
+    println!("Done");
 }

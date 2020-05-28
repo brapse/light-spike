@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::collections::HashMap;
 use crossbeam::channel;
 
@@ -52,11 +53,19 @@ enum Event {
 }
 
 // Supervisor
-struct Supervisor {
+pub struct Supervisor {
     peers: PeerList,
 }
 
 impl Supervisor {
+    pub fn new() -> Supervisor {
+        return Supervisor {
+            peers: PeerList {
+                primary: PeerID::from("1"),
+                peers: HashMap::new(),
+            }
+        }
+    }
     fn verify_to_target(&mut self, height: Height) -> Option<Header> {
         // Check store or whatever
         while let Some(mut primary) = self.peers.primary() {
