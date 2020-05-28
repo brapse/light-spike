@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use crossbeam::channel;
+
 type Height = u64;
 pub type PeerID = String;
 
@@ -41,6 +43,14 @@ impl Instance {
     }
 }
 
+enum Event {
+    Terminate(),
+    Terminated(),
+    VerifyToTarget(Height),
+    Verified(Header),
+    FailedVerification(Height),
+}
+
 // Supervisor
 struct Supervisor {
     peers: PeerList,
@@ -48,14 +58,12 @@ struct Supervisor {
 
 impl Supervisor {
     fn verify_to_target(&mut self, height: Height) -> Option<Header> {
+        // Check store or whatever
         while let Some(mut primary) = self.peers.primary() {
             let verified = primary.verify_to_target(height);
 
             match verified {
                 Some(header) => {
-                    // so here we need to pass in the the rest of the peers
-                    // But I don't think we will be able to because it's already borrowed as
-                    // mutable
                     let outcome = self.detect_forks(&header);
 
                     match outcome {
@@ -102,5 +110,31 @@ impl Supervisor {
         return None
      }
 
-    // TODO: Simple runtime which checks replies to requests from subscriptions (relayer or RPC) to 
+    // consome the instance, further communication must use the channels
+    fn run(mut self,
+        input: channel::Receiver<Event>,
+        output: channel::Sender<Event>) {
+        loop {
+            let event = input.recv().unwrap();
+            match event {
+                Event::Terminate() => {
+                    println!("Terminating node");
+                    output.send(Event::Terminated()).unwrap();
+                    return
+                },
+                // or maybe this is just get header?
+                Event::VerifyToTarget(height) => {
+                    let outcome = self.verify_to_target(height);
+                    if let Some(header) = outcome {
+                        output.send(Event::Verified(header)).unwrap();
+                    } else {
+                        output.send(Event::FailedVerification(height)).unwrap();
+                    }
+                }
+                _ => {
+                    // NoOp?
+                },
+            }
+        }
+    }
 }
