@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::collections::HashMap;
 use crossbeam::channel;
 
-type Height = u64;
+pub type Height = u64;
 pub type PeerID = String;
 
 
@@ -25,7 +25,9 @@ impl PeerList {
         // TODO
     }
 }
-struct Header {
+
+#[derive(Debug)]
+pub struct Header {
 }
 
 enum Fork {
@@ -44,7 +46,8 @@ impl Instance {
     }
 }
 
-enum Event {
+#[derive(Debug)]
+pub enum Event {
     Terminate(),
     Terminated(),
     VerifyToTarget(Height),
@@ -97,7 +100,7 @@ impl Supervisor {
                         },
                         None => {
                             // TODO: update trusted state
-                            // TODO: send to relayer
+                            // TODO: send to relayer, maybe the run method does this?
                         }
                     }
                 },
@@ -120,7 +123,7 @@ impl Supervisor {
      }
 
     // consome the instance, further communication must use the channels
-    fn run(mut self,
+    pub fn run(mut self,
         input: channel::Receiver<Event>,
         output: channel::Sender<Event>) {
         loop {
