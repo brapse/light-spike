@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{thread,time};
 use std::collections::HashMap;
 use crossbeam::channel;
 
@@ -81,11 +81,16 @@ pub enum Event {
 // Supervisor
 pub struct Supervisor {
     peers: PeerList,
+    sender: channel::Sender<Event>,
+    receiver: channel::Receiver<Event>,
 }
 
 impl Supervisor {
     pub fn new() -> Supervisor {
+        let (sender, receiver) = channel::unbounded::<Event>();
         return Supervisor {
+            sender,
+            receiver,
             peers: PeerList {
                 primary: PeerID::from("1"),
                 peers: HashMap::new(),
@@ -145,27 +150,34 @@ impl Supervisor {
         return None
      }
 
+    pub fn handler(&mut self) -> Handler {
+        let sender = self.sender.clone();
+
+        return Handler::new(sender);
+    }
+
     // Consume the instance here but return a runtime which will allow interaction
-    pub fn run(mut self,
-        input: channel::Receiver<Event>,
-        output: channel::Sender<Event>) {
-        loop {
-            let event = input.recv().unwrap();
-            match event {
-                Event::Terminate() => {
-                    println!("Terminating node");
-                    output.send(Event::Terminated()).unwrap();
-                    return
-                },
-                Event::VerifyToTarget(height, callback) => {
-                    let outcome = self.verify_to_target(height);
-                    callback.call(outcome);
-                },
-                _ => {
-                    // NoOp?
-                },
+    // Maybe return an output channnel here?
+    pub fn run(mut self) {
+        thread::spawn(move || {
+            loop {
+                let event = self.receiver.recv().unwrap();
+                match event {
+                    Event::Terminate() => {
+                        println!("Terminating light client");
+                        //output.send(Event::Terminated()).unwrap();
+                        return
+                    },
+                    Event::VerifyToTarget(height, callback) => {
+                        let outcome = self.verify_to_target(height);
+                        callback.call(outcome);
+                    },
+                    _ => {
+                        // NoOp?
+                    },
+                }
             }
-        }
+        });
     }
 }
 
@@ -218,5 +230,10 @@ impl Handler {
     pub fn verify_to_target_async(&mut self, height: Height, callback: fn(VerificationResult) -> ()) {
         let event = Event::VerifyToTarget(height, Callback::new(callback));
         self.sender.send(event).unwrap();
+    }
+
+    pub fn terminate(&mut self) {
+        self.sender.send(Event::Terminate()).unwrap();
+        // How do we wait for this to complete?
     }
 }
