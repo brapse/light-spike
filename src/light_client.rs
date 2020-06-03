@@ -71,8 +71,7 @@ impl Instance {
 
 #[derive(Debug)]
 pub enum Event {
-    Terminate(),
-    Terminated(),
+    Terminate(channel::Sender<()>),
     VerifyToTarget(Height, Callback),
     Verified(Header),
     FailedVerification(),
@@ -163,9 +162,9 @@ impl Supervisor {
             loop {
                 let event = self.receiver.recv().unwrap();
                 match event {
-                    Event::Terminate() => {
+                    Event::Terminate(sender) => {
                         println!("Terminating light client");
-                        //output.send(Event::Terminated()).unwrap();
+                        sender.send(()).unwrap();
                         return
                     },
                     Event::VerifyToTarget(height, callback) => {
@@ -187,7 +186,6 @@ pub struct Handler {
     sender: channel::Sender<Event>,
 }
 
-// Assume single handler
 impl Handler {
     // How do we connect with the runtime?
     pub fn new(sender: channel::Sender<Event>) -> Handler {
@@ -233,7 +231,9 @@ impl Handler {
     }
 
     pub fn terminate(&mut self) {
-        self.sender.send(Event::Terminate()).unwrap();
-        // How do we wait for this to complete?
+        let (sender, receiver) = channel::bounded::<()>(1);
+
+        self.sender.send(Event::Terminate(sender)).unwrap();
+        receiver.recv().unwrap();
     }
 }
