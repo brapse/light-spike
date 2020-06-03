@@ -35,16 +35,6 @@ fn main() {
         light_client.run(light_client_receiver, light_client_output);
     });
 
-    // So handlers work well for sending, what about receiving?
-    // Handlers assuming that we want synchronous access to an asynchronous process
-    // Do we ever want asynchronous access access to an asynchronous process?
-    // Example would be: When we want non blocking component interaction
-    // In this case we would need to have a handler specific subscription. Events processed by the 
-    // The foreign component would then need to be routed to specific subcriptions
-    // But when can we envision this happening? Maybe the relayer wants to accumulate events while
-    // it waits for the light client to update
-    // But for a first pass maybe we just provide synchronous access to asycnrhonous components
-
     // let (relayer_client_sender, relyaer_client_receiver)  = channel::unbounded::<Event>();
     // thread::spawn(move || {
         // realyer.run(light_client_sender, light_client_receiver);
@@ -53,11 +43,7 @@ fn main() {
     //
     //
 
-    // Maybe we could simplify the all the channel nonsense with the handler pattern in which
-    // construction of an instance returns a handler which hides all the events and channel
-    // abstraction
-
-    light_client_sender.send(LEvent::VerifyToTarget(32)).unwrap();
+    //light_client_sender.send(LEvent::VerifyToTarget(32)).unwrap();
     light_client_sender.send(LEvent::Terminate()).unwrap();
 
     // maybe just put the node loop here

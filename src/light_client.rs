@@ -5,6 +5,29 @@ use crossbeam::channel;
 pub type Height = u64;
 pub type PeerID = String;
 
+pub type VerificationResult = Result<Header, &'static str>;
+
+pub struct Callback {
+    inner: Box<dyn FnOnce(VerificationResult) + Send>,
+}
+
+impl std::fmt::Debug for Callback{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Callback").finish()
+    }
+}
+
+impl Callback {
+    fn new(inner: impl FnOnce(VerificationResult) -> () + Send + 'static) -> Callback {
+        return Callback {
+            inner: Box::new(inner),
+        }
+    }
+
+    fn call(self, result: VerificationResult) -> () {
+        (self.inner)(result);
+    }
+}
 
 // TODO: Error handling of mutations
 struct PeerList {
@@ -40,9 +63,9 @@ struct Instance {
 }
 
 impl Instance {
-    fn verify_to_target(&mut self, _height: Height) -> Option<Header>{
+    fn verify_to_target(&mut self, _height: Height) -> VerificationResult {
         // TODO
-        return None
+        return Err("not implemented")
     }
 }
 
@@ -50,9 +73,9 @@ impl Instance {
 pub enum Event {
     Terminate(),
     Terminated(),
-    VerifyToTarget(Height),
+    VerifyToTarget(Height, Callback),
     Verified(Header),
-    FailedVerification(Height),
+    FailedVerification(),
 }
 
 // Supervisor
@@ -69,13 +92,14 @@ impl Supervisor {
             }
         }
     }
-    fn verify_to_target(&mut self, height: Height) -> Option<Header> {
+
+    fn verify_to_target(&mut self, height: Height) -> VerificationResult {
         // Check store or whatever
         while let Some(mut primary) = self.peers.primary() {
             let verified = primary.verify_to_target(height);
 
             match verified {
-                Some(header) => {
+                Ok(header) => {
                     let outcome = self.detect_forks(&header);
 
                     match outcome {
@@ -95,7 +119,6 @@ impl Supervisor {
                             }
                             if detected {
                                 println!("Fork detected, exiting");
-                                return None;
                             }
                         },
                         None => {
@@ -105,13 +128,13 @@ impl Supervisor {
                     }
                 },
                 // Verification failed
-                None => {
+                Err(_err) => {
                     self.peers.swap_primary();
                 }
             }
         }
 
-        return None
+        return Err("not implemeneted");
     }
 
     fn report_evidence(&mut self, _header: &Header) {
@@ -122,7 +145,7 @@ impl Supervisor {
         return None
      }
 
-    // consome the instance, further communication must use the channels
+    // Consume the instance here but return a runtime which will allow interaction
     pub fn run(mut self,
         input: channel::Receiver<Event>,
         output: channel::Sender<Event>) {
@@ -134,19 +157,66 @@ impl Supervisor {
                     output.send(Event::Terminated()).unwrap();
                     return
                 },
-                // or maybe this is just get header?
-                Event::VerifyToTarget(height) => {
+                Event::VerifyToTarget(height, callback) => {
                     let outcome = self.verify_to_target(height);
-                    if let Some(header) = outcome {
-                        output.send(Event::Verified(header)).unwrap();
-                    } else {
-                        output.send(Event::FailedVerification(height)).unwrap();
-                    }
-                }
+                    callback.call(outcome);
+                },
                 _ => {
                     // NoOp?
                 },
             }
         }
+    }
+}
+
+
+
+pub struct Handler {
+    sender: channel::Sender<Event>,
+}
+
+// Assume single handler
+impl Handler {
+    // How do we connect with the runtime?
+    pub fn new(sender: channel::Sender<Event>) -> Handler {
+        return Handler {
+            sender,
+        }
+    }
+
+    pub fn verify_to_target(&mut self, height: Height) -> Result<Header, &'static str> {
+        let (sender, receiver) = channel::bounded::<Event>(1);
+        let callback = Callback::new(move |result| {
+            // we need to create an event here
+            let event = match result {
+                Ok(header) => {
+                    Event::Verified(header)
+                },
+                Err(err) => {
+                    Event::FailedVerification()
+                }
+            };
+            sender.send(event).unwrap();
+        });
+
+        self.sender.send(Event::VerifyToTarget(height, callback)).unwrap();
+
+        match receiver.recv().unwrap() {
+            Event::Verified(header) => {
+                return Ok(header);
+            },
+            Event::FailedVerification() => {
+                return Err("too bar");
+            },
+            _ => {
+                return Err("that was unexpected");
+            }
+
+        }
+    }
+
+    pub fn verify_to_target_async(&mut self, height: Height, callback: fn(VerificationResult) -> ()) {
+        let event = Event::VerifyToTarget(height, Callback::new(callback));
+        self.sender.send(event).unwrap();
     }
 }
